@@ -1,0 +1,29 @@
+# ─── Dependencies ───
+node_modules/
+
+# ─── Build output ───
+dist/
+
+# ─── Environment variables (never commit these) ───
+.env
+.env.local
+.env.production
+
+# ─── Drizzle migrations (keep schema, ignore snapshots) ───
+src/db/migrations/meta/
+
+# ─── Logs ───
+logs/
+*.log
+npm-debug.log*
+
+# ─── OS files ───
+.DS_Store
+Thumbs.db
+
+# ─── IDE files ───
+.vscode/
+.idea/
+
+# ─── TypeScript cache ───
+*.tsbuildinfo
