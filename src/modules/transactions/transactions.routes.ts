@@ -1,25 +1,22 @@
 import { Router } from "express";
-import { staffMiddleware, adminStaffMiddleware } from "../../middleware/staff.middleware";
+import {
+  getStudentTransactions,
+  getTransactionById,
+} from "./transactions.controller";
 import { authMiddleware } from "../../middleware/auth.middleware";
-import { validate, validateQuery } from "../../middleware/validate.middleware";
-import {
-  createWithdrawalSchema,
-  verifyWithdrawalPinSchema,
-  reverseWithdrawalSchema,
-  withdrawalHistorySchema,
-} from "./withdrawals.schema";
-import {
-  createWithdrawal,
-  verifyWithdrawalPin,
-  reverseWithdrawal,
-  getWithdrawalHistory,
-} from "./withdrawals.controller";
 
 const router = Router();
 
-router.post("/", staffMiddleware, validate(createWithdrawalSchema), createWithdrawal);
-router.post("/:id/verify-pin", validate(verifyWithdrawalPinSchema), verifyWithdrawalPin);
-router.post("/:id/reverse", adminStaffMiddleware, validate(reverseWithdrawalSchema), reverseWithdrawal);
-router.get("/history", staffMiddleware, validateQuery(withdrawalHistorySchema), getWithdrawalHistory);
+router.use(authMiddleware);
+
+/**
+ * @swagger
+ * tags:
+ *   name: Transactions
+ *   description: Full transaction history per student
+ */
+
+router.get("/:id/transactions", getStudentTransactions);
+router.get("/:id", getTransactionById);
 
 export default router;

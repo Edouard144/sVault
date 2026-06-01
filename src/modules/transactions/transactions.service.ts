@@ -1,38 +1,54 @@
-import { eq, desc, count } from "drizzle-orm";
+import { eq, and, desc, count } from "drizzle-orm";
 import { db } from "../../config/db";
-import { transactions, students, parentStudents, deposits, withdrawals } from "../../db/schema/index";
+import {
+  transactions,
+  students,
+  parentStudents,
+} from "../../db/schema/index";
 import { AppError } from "../../middleware/error.middleware";
-import type { AuthenticatedParentRequest } from "../../types/index";
 
-import { desc, count } from "drizzle-orm";
-import { db } from "../../config/db";
-import { transactions, students, parentStudents, deposits, withdrawals } from "../../db/schema/index";
+export const getStudentTransactionsService = async (
+  parentId: string,
+  studentId: string,
+  page: number,
+  limit: number
+) => {
+  const link = await db.query.parentStudents.findFirst({
+    where: and(
+      eq(parentStudents.parentId, parentId),
+      eq(parentStudents.studentId, studentId)
+    ),
+  });
 
-export const getStudentTransactionsService = async (studentId: string, page = 1, limit = 20) => {
+  if (!link) {
+    throw new AppError(
+      "Student not found or not linked to your account",
+      404
+    );
+  }
+
   const offset = (page - 1) * limit;
 
-  const txs = await db
-    .select({
-      id: transactions.id,
-      type: transactions.type,
-      status: transactions.status,
-      amount: transactions.amount,
-      balanceAfter: transactions.balanceAfter,
-      description: transactions.description,
-      createdAt: transactions.createdAt,
-      depositId: transactions.depositId,
-      withdrawalId: transactions.withdrawalId,
-    })
+  const list = await db
+    .select()
     .from(transactions)
     .where(eq(transactions.studentId, studentId))
     .orderBy(desc(transactions.createdAt))
     .limit(limit)
     .offset(offset);
 
-  const [{ total }] = await db.select({ total: count() }).from(transactions).where(eq(transactions.studentId, studentId));
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(transactions)
+    .where(eq(transactions.studentId, studentId));
+
+  const student = await db.query.students.findFirst({
+    where: eq(students.id, studentId),
+  });
 
   return {
-    data: txs,
+    data: list,
+    currentBalance: student?.balance || 0,
     meta: {
       page,
       limit,
@@ -42,29 +58,46 @@ export const getStudentTransactionsService = async (studentId: string, page = 1,
   };
 };
 
-export const getMyTransactionsService = async (parentId: string, page = 1, limit = 20) => {
-  const offset = (page - 1) * limit;
+export const getTransactionByIdService = async (
+  parentId: string,
+  transactionId: string
+) => {
+  const transaction = await db.query.transactions.findFirst({
+    where: eq(transactions.id, transactionId),
+  });
 
-  const linkedStudentIds = (
-    await db.query.parentStudents.findMany({
-      where: eq(parentStudents.parentId, parentId),
-      columns: { studentId: true },
-    })
-  ).map((l) => l.studentId);
+  if (!transaction) {
+    throw new AppError("Transaction not found", 404);
+  }
 
-  const txs = await db
-    .select({
-      id: transactions.id,
-      type: transactions.type,
-      status: transactions.status,
-      amount: transactions.amount,
-      balanceAfter: transactions.balanceAfter,
-      description: transactions.description,
-      createdAt: transactions.createdAt,
-      studentId: transactions.studentId,
-    })
-    .from(transactions)
-    .where(eq(transactions.studentId, linkedStudentIds[0]))
-    .orderBy(desc(transactions.createdAt))
-    .limit(limit)
-    .offset(offset);
+  const link = await db.query.parentStudents.findFirst({
+    where: and(
+      eq(parentStudents.parentId, parentId),
+      eq(parentStudents.studentId, transaction.studentId)
+    ),
+  });
+
+  if (!link) {
+    throw new AppError("Access denied to this transaction", 403);
+  }
+
+  const student = await db.query.students.findFirst({
+    where: eq(students.id, transaction.studentId),
+  });
+
+  return {
+    id: transaction.id,
+    type: transaction.type,
+    status: transaction.status,
+    amount: transaction.amount,
+    balanceAfter: transaction.balanceAfter,
+    description: transaction.description,
+    depositId: transaction.depositId,
+    withdrawalId: transaction.withdrawalId,
+    createdAt: transaction.createdAt,
+    student: {
+      id: student?.id,
+      fullName: student?.fullName,
+    },
+  };
+};
