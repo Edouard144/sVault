@@ -11,6 +11,7 @@ import { errorMiddleware } from "./middleware/error.middleware";
 import authRoutes from "./modules/auth/auth.routes";
 import parentsRoutes from "./modules/parents/parents.routes";
 import studentsRoutes from "./modules/students/students.routes";
+import staffRoutes from "./modules/staff/staff.routes";
 // import depositsRoutes from "./modules/deposits/deposits.routes";
 // import withdrawalsRoutes from "./modules/withdrawals/withdrawals.routes";
 // import transactionsRoutes from "./modules/transactions/transactions.routes";
@@ -79,6 +80,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/parents", parentsRoutes);
 app.use("/api/v1/students", studentsRoutes);
+app.use("/api/v1/staff", staffRoutes);
 // app.use("/api/v1/deposits", depositsRoutes);
 // app.use("/api/v1/withdrawals", withdrawalsRoutes);
 // app.use("/api/v1/transactions", transactionsRoutes);
