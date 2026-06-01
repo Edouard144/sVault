@@ -1,19 +1,20 @@
 import { Request, Response, NextFunction } from "express";
 import {
-  getParentDashboardService,
+  getDashboardAnalyticsService,
   getStudentSpendingService,
+  getStudentCategoriesService,
 } from "./analytics.service";
 import { sendSuccess } from "../../utils/response";
 import type { AuthenticatedParentRequest } from "../../types/index";
 
-export const getParentDashboard = async (
+export const getDashboardAnalytics = async (
   req: AuthenticatedParentRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await getParentDashboardService(req.parent.parentId);
-    sendSuccess(res, "Dashboard fetched", result);
+    const result = await getDashboardAnalyticsService(req.parent.parentId);
+    sendSuccess(res, "Dashboard analytics fetched", result);
   } catch (error) {
     next(error);
   }
@@ -29,7 +30,23 @@ export const getStudentSpending = async (
       req.parent.parentId,
       req.params.id
     );
-    sendSuccess(res, "Spending analytics fetched", result);
+    sendSuccess(res, "Student spending analytics fetched", result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getStudentCategories = async (
+  req: AuthenticatedParentRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const result = await getStudentCategoriesService(
+      req.parent.parentId,
+      req.params.id
+    );
+    sendSuccess(res, "Spending categories fetched", result);
   } catch (error) {
     next(error);
   }

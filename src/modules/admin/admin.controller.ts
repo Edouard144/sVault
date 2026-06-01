@@ -1,67 +1,50 @@
 import { Request, Response, NextFunction } from "express";
 import {
-  getSystemOverviewService,
-  getSchoolOverviewService,
-  toggleSchoolFreezeService,
-  toggleStudentFreezeService,
+  getAdminStatsService,
+  toggleAccountFreezeService,
+  getAuditLogsService,
 } from "./admin.service";
 import { sendSuccess } from "../../utils/response";
-import type { AuthenticatedStaffRequest } from "../../types/index";
 
-export const getSystemOverview = async (
+export const getAdminStats = async (
   _req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await getSystemOverviewService();
-    sendSuccess(res, "System overview fetched", result);
+    const result = await getAdminStatsService();
+    sendSuccess(res, "Platform stats fetched", result);
   } catch (error) {
     next(error);
   }
 };
 
-export const getSchoolOverview = async (
-  req: AuthenticatedStaffRequest,
+export const toggleAccountFreeze = async (
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await getSchoolOverviewService(req.staff.schoolId);
-    sendSuccess(res, "School overview fetched", result);
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const toggleSchoolFreeze = async (
-  req: AuthenticatedStaffRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const result = await toggleSchoolFreezeService(
-      req.params.id,
-      req.staff.staffId,
-      req.staff.role
-    );
+    const freeze = req.body.freeze === true;
+    const result = await toggleAccountFreezeService(req.params.id, freeze);
     sendSuccess(res, result.message, result);
   } catch (error) {
     next(error);
   }
 };
 
-export const toggleStudentFreeze = async (
-  req: AuthenticatedStaffRequest,
+export const getAuditLogs = async (
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await toggleStudentFreezeService(
-      req.params.id,
-      req.staff.schoolId
-    );
-    sendSuccess(res, result.message, result);
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 50;
+    const action = req.query.action as string | undefined;
+
+    const result = await getAuditLogsService(page, limit, action);
+    sendSuccess(res, "Audit logs fetched", result.data, 200, result.meta);
   } catch (error) {
     next(error);
   }

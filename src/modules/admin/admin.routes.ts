@@ -1,27 +1,36 @@
-import { Router } from "express";
-import {
-  getSystemOverview,
-  getSchoolOverview,
-  toggleSchoolFreeze,
-  toggleStudentFreeze,
-} from "./admin.controller";
-import { adminStaffMiddleware } from "../../middleware/staff.middleware";
-import { staffMiddleware } from "../../middleware/staff.middleware";
+import { Router, Request, Response, NextFunction } from "express";
+import { z } from "zod";
+import { getAdminStats, toggleAccountFreeze, getAuditLogs } from "./admin.controller";
+import { validate } from "../../middleware/validate.middleware";
+
+const adminKeyMiddleware = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const key = req.headers["x-admin-key"];
+  if (!key || key !== process.env.ADMIN_SECRET_KEY) {
+    res.status(403).json({
+      success: false,
+      message: "Invalid admin key",
+    });
+    return;
+  }
+  next();
+};
+
+const freezeSchema = z.object({
+  freeze: z.boolean({
+    required_error: "freeze (boolean) is required",
+  }),
+});
 
 const router = Router();
 
-router.use(adminStaffMiddleware);
+router.use(adminKeyMiddleware);
 
-/**
- * @swagger
- * tags:
- *   name: Admin
- *   description: System and school administration
- */
-
-router.get("/overview", getSystemOverview);
-router.get("/schools/:id/overview", getSchoolOverview);
-router.post("/schools/:id/freeze", toggleSchoolFreeze);
-router.post("/students/:id/freeze", toggleStudentFreeze);
+router.get("/stats", getAdminStats);
+router.patch("/accounts/:id/freeze", validate(freezeSchema), toggleAccountFreeze);
+router.get("/logs", getAuditLogs);
 
 export default router;

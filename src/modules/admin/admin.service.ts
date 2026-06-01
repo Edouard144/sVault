@@ -1,152 +1,155 @@
-import { eq, count, sql } from "drizzle-orm";
+import { eq, count, sum, sql, desc } from "drizzle-orm";
 import { db } from "../../config/db";
 import {
-  schools,
-  staff,
-  students,
   parents,
+  students,
+  schools,
   deposits,
   withdrawals,
+  transactions,
+  auditLogs,
 } from "../../db/schema/index";
 import { AppError } from "../../middleware/error.middleware";
-import type { StaffRole } from "../../types/index";
 
-// ─────────────────────────────────────────
-// System overview — all key counts
-// ─────────────────────────────────────────
-export const getSystemOverviewService = async () => {
-  const [schoolCount] = await db.select({ count: count() }).from(schools);
-  const [staffCount] = await db.select({ count: count() }).from(staff);
-  const [studentCount] = await db.select({ count: count() }).from(students);
-  const [parentCount] = await db.select({ count: count() }).from(parents);
+export const getAdminStatsService = async () => {
+  const [
+    [{ totalParents }],
+    [{ totalStudents }],
+    [{ totalSchools }],
+    [{ totalDeposited }],
+    [{ totalWithdrawn }],
+    [{ pendingDeposits }],
+  ] = await Promise.all([
+    db.select({ totalParents: count() }).from(parents),
+    db.select({ totalStudents: count() }).from(students),
+    db.select({ totalSchools: count() }).from(schools),
+    db
+      .select({
+        totalDeposited: sql<number>`coalesce(sum(${deposits.amount}), 0)`,
+      })
+      .from(deposits)
+      .where(eq(deposits.status, "completed")),
+    db
+      .select({
+        totalWithdrawn: sql<number>`coalesce(sum(${withdrawals.amount}), 0)`,
+      })
+      .from(withdrawals)
+      .where(eq(withdrawals.status, "approved")),
+    db
+      .select({ pendingDeposits: count() })
+      .from(deposits)
+      .where(eq(deposits.status, "pending")),
+  ]);
+
+  const [{ totalBalance }] = await db
+    .select({
+      totalBalance: sql<number>`coalesce(sum(${students.balance}), 0)`,
+    })
+    .from(students);
 
   return {
-    schools: schoolCount.count,
-    staff: staffCount.count,
-    students: studentCount.count,
-    parents: parentCount.count,
-  };
-};
-
-// ─────────────────────────────────────────
-// School-specific overview
-// ─────────────────────────────────────────
-export const getSchoolOverviewService = async (
-  schoolId: string
-) => {
-  const school = await db.query.schools.findFirst({
-    where: eq(schools.id, schoolId),
-  });
-
-  if (!school) {
-    throw new AppError("School not found", 404);
-  }
-
-  const [studentCount] = await db
-    .select({ count: count() })
-    .from(students)
-    .where(eq(students.schoolId, schoolId));
-
-  const [staffCount] = await db
-    .select({ count: count() })
-    .from(staff)
-    .where(eq(staff.schoolId, schoolId));
-
-  const [depositStats] = await db
-    .select({
-      count: count(),
-      total: sql<number>`SUM(amount)`,
-    })
-    .from(deposits)
-    .innerJoin(students, eq(deposits.studentId, students.id))
-    .where(eq(students.schoolId, schoolId));
-
-  const [withdrawalStats] = await db
-    .select({
-      count: count(),
-      total: sql<number>`SUM(amount)`,
-    })
-    .from(withdrawals)
-    .innerJoin(students, eq(withdrawals.studentId, students.id))
-    .where(eq(students.schoolId, schoolId));
-
-  return {
-    school: {
-      id: school.id,
-      name: school.name,
-      prefix: school.prefix,
-      isFrozen: school.isFrozen,
+    platform: {
+      totalParents: Number(totalParents),
+      totalStudents: Number(totalStudents),
+      totalSchools: Number(totalSchools),
     },
-    stats: {
-      students: studentCount.count,
-      staff: staffCount.count,
-      totalDeposits: Number(depositStats.total) || 0,
-      depositCount: depositStats.count,
-      totalWithdrawals: Number(withdrawalStats.total) || 0,
-      withdrawalCount: withdrawalStats.count,
+    money: {
+      totalDeposited: Number(totalDeposited),
+      totalWithdrawn: Number(totalWithdrawn),
+      totalBalanceInSystem: Number(totalBalance),
+      pendingDeposits: Number(pendingDeposits),
     },
   };
 };
 
-// ─────────────────────────────────────────
-// Freeze / unfreeze a school
-// ─────────────────────────────────────────
-export const toggleSchoolFreezeService = async (
-  schoolId: string,
-  _staffId: string,
-  _staffRole: StaffRole
+export const toggleAccountFreezeService = async (
+  accountId: string,
+  freeze: boolean
 ) => {
-  const school = await db.query.schools.findFirst({
-    where: eq(schools.id, schoolId),
+  const parent = await db.query.parents.findFirst({
+    where: eq(parents.id, accountId),
   });
 
-  if (!school) {
-    throw new AppError("School not found", 404);
+  if (parent) {
+    await db
+      .update(parents)
+      .set({ isFrozen: freeze, updatedAt: new Date() })
+      .where(eq(parents.id, accountId));
+
+    await db.insert(auditLogs).values({
+      actorType: "admin",
+      actorId: accountId,
+      action: freeze ? "ACCOUNT_FROZEN" : "ACCOUNT_UNFROZEN",
+      targetType: "parent",
+      targetId: accountId,
+      metadata: { freeze },
+    });
+
+    return {
+      id: accountId,
+      type: "parent",
+      isFrozen: freeze,
+      message: `Parent account ${freeze ? "frozen" : "unfrozen"} successfully`,
+    };
   }
 
-  const [updated] = await db
-    .update(schools)
-    .set({ isFrozen: !school.isFrozen, updatedAt: new Date() })
-    .where(eq(schools.id, schoolId))
-    .returning();
-
-  return {
-    id: updated.id,
-    name: updated.name,
-    isFrozen: updated.isFrozen,
-    message: updated.isFrozen
-      ? "School has been frozen. All transactions blocked."
-      : "School has been unfrozen. Transactions can resume.",
-  };
-};
-
-// ─────────────────────────────────────────
-// Freeze / unfreeze a student
-// ─────────────────────────────────────────
-export const toggleStudentFreezeService = async (
-  studentId: string,
-  _schoolId: string
-) => {
   const student = await db.query.students.findFirst({
-    where: eq(students.id, studentId),
+    where: eq(students.id, accountId),
   });
 
-  if (!student) {
-    throw new AppError("Student not found", 404);
+  if (student) {
+    await db
+      .update(students)
+      .set({ isFrozen: freeze, updatedAt: new Date() })
+      .where(eq(students.id, accountId));
+
+    await db.insert(auditLogs).values({
+      actorType: "admin",
+      actorId: accountId,
+      action: freeze ? "ACCOUNT_FROZEN" : "ACCOUNT_UNFROZEN",
+      targetType: "student",
+      targetId: accountId,
+      metadata: { freeze },
+    });
+
+    return {
+      id: accountId,
+      type: "student",
+      isFrozen: freeze,
+      message: `Student account ${freeze ? "frozen" : "unfrozen"} successfully`,
+    };
   }
 
-  const [updated] = await db
-    .update(students)
-    .set({ isFrozen: !student.isFrozen, updatedAt: new Date() })
-    .where(eq(students.id, studentId))
-    .returning();
+  throw new AppError("Account not found", 404);
+};
+
+export const getAuditLogsService = async (
+  page: number,
+  limit: number,
+  action?: string
+) => {
+  const offset = (page - 1) * limit;
+
+  const logs = await db
+    .select()
+    .from(auditLogs)
+    .where(action ? eq(auditLogs.action, action) : undefined)
+    .orderBy(desc(auditLogs.createdAt))
+    .limit(limit)
+    .offset(offset);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(auditLogs)
+    .where(action ? eq(auditLogs.action, action) : undefined);
 
   return {
-    id: updated.id,
-    fullName: updated.fullName,
-    isFrozen: updated.isFrozen,
-    message: updated.isFrozen
-      ? "Student account frozen. No withdrawals allowed."
-      : "Student account unfrozen.",
+    data: logs,
+    meta: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
   };
 };
