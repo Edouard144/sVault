@@ -9,7 +9,7 @@ import { errorMiddleware } from "./middleware/error.middleware";
 
 // ─── Route imports ───
 import authRoutes from "./modules/auth/auth.routes";
-// import parentsRoutes from "./modules/parents/parents.routes";
+import parentsRoutes from "./modules/parents/parents.routes";
 // import studentsRoutes from "./modules/students/students.routes";
 // import depositsRoutes from "./modules/deposits/deposits.routes";
 // import withdrawalsRoutes from "./modules/withdrawals/withdrawals.routes";
@@ -77,7 +77,7 @@ app.get("/health", (_req, res) => {
 // API ROUTES — all prefixed with /api/v1
 // ─────────────────────────────────────────
 app.use("/api/v1/auth", authRoutes);
-// app.use("/api/v1/parents", parentsRoutes);
+app.use("/api/v1/parents", parentsRoutes);
 // app.use("/api/v1/students", studentsRoutes);
 // app.use("/api/v1/deposits", depositsRoutes);
 // app.use("/api/v1/withdrawals", withdrawalsRoutes);
