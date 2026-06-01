@@ -1,65 +1,60 @@
-import { eq, and, desc, count } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { db } from "../../config/db";
 import {
   withdrawals,
   students,
-  staff as staffSchema,
+  staff,
   transactions,
+  auditLogs,
   parentStudents,
   parents,
-  notifications,
-  auditLogs,
 } from "../../db/schema/index";
 import { AppError } from "../../middleware/error.middleware";
+import { verifyOtp } from "../../utils/otp";
 import { notifyParentsOfStudent } from "../notifications/notifications.service";
-import { generateId } from "../../utils/codes";
 import type {
-  CreateWithdrawalInput,
-  VerifyWithdrawalPinInput,
+  InitiateWithdrawalInput,
+  VerifyWithdrawalInput,
   ReverseWithdrawalInput,
   WithdrawalHistoryInput,
 } from "./withdrawals.schema";
 import type { StaffRole } from "../../types/index";
 
-// ─────────────────────────────────────────
-// POST /withdrawals
-// ─── Staff initiates a withdrawal request
-// ─── Status starts as "pending" until student verifies PIN
-// ─────────────────────────────────────────
-export const createWithdrawalService = async (
+export const initiateWithdrawalService = async (
   staffId: string,
   schoolId: string,
-  input: CreateWithdrawalInput
+  input: InitiateWithdrawalInput
 ) => {
   const { studentId, amount, reason } = input;
 
-  // ─── Verify student exists and belongs to staff's school ───
   const student = await db.query.students.findFirst({
     where: eq(students.id, studentId),
   });
 
-  if (!student) {
-    throw new AppError("Student not found", 404);
-  }
-
-  if (student.schoolId !== schoolId) {
-    throw new AppError("Student does not belong to your school", 403);
+  if (!student || student.schoolId !== schoolId) {
+    throw new AppError("Student not found in your school", 404);
   }
 
   if (student.isFrozen) {
     throw new AppError("This student account is frozen", 403);
   }
 
-  // ─── Check sufficient balance ───
   if (student.balance < amount) {
+    await db.insert(auditLogs).values({
+      actorType: "staff",
+      actorId: staffId,
+      action: "WITHDRAWAL_INSUFFICIENT_BALANCE",
+      targetType: "student",
+      targetId: studentId,
+      metadata: { attemptedAmount: amount, currentBalance: student.balance, reason },
+    });
     throw new AppError(
-      `Insufficient balance. Current balance: ${student.balance} Frw`,
+      `Insufficient balance. Current: ${student.balance} Frw`,
       400
     );
   }
 
-  // ─── Create pending withdrawal ───
   const [newWithdrawal] = await db
     .insert(withdrawals)
     .values({
@@ -71,51 +66,39 @@ export const createWithdrawalService = async (
     })
     .returning();
 
-  // ─── Create audit log ───
-  await db.insert(auditLogs).values({
-    actorType: "staff",
-    actorId: staffId,
-    action: "WITHDRAWAL_INITIATED",
-    targetType: "withdrawal",
-    targetId: newWithdrawal.id,
-    metadata: { amount, reason, studentId },
+  const staffMember = await db.query.staff.findFirst({
+    where: eq(staff.id, staffId),
   });
 
   return {
-    id: newWithdrawal.id,
-    studentId: newWithdrawal.studentId,
+    withdrawalId: newWithdrawal.id,
     amount: newWithdrawal.amount,
     reason: newWithdrawal.reason,
     status: newWithdrawal.status,
-    createdAt: newWithdrawal.createdAt,
+    student: { id: student.id, fullName: student.fullName, currentBalance: student.balance },
+    staff: { id: staffMember?.id, fullName: staffMember?.fullName },
+    message: "Withdrawal initiated. Student must verify with PIN.",
   };
 };
 
-// ─────────────────────────────────────────
-// POST /withdrawals/:id/verify-pin
-// ─── Student enters PIN to approve withdrawal
-// ─── If PIN correct → approve, deduct balance, notify parents
-// ─── If PIN wrong → reject withdrawal
-// ─────────────────────────────────────────
 export const verifyWithdrawalPinService = async (
-  withdrawalId: string,
-  input: VerifyWithdrawalPinInput
+  staffId: string,
+  input: VerifyWithdrawalInput
 ) => {
-  const { pin } = input;
+  const { withdrawalId, pin } = input;
 
-  // ─── Find pending withdrawal ───
   const withdrawal = await db.query.withdrawals.findFirst({
-    where: and(
-      eq(withdrawals.id, withdrawalId),
-      eq(withdrawals.status, "pending")
-    ),
+    where: and(eq(withdrawals.id, withdrawalId), eq(withdrawals.status, "pending")),
   });
 
   if (!withdrawal) {
     throw new AppError("Withdrawal not found or already processed", 404);
   }
 
-  // ─── Fetch student PIN hash ───
+  if (withdrawal.staffId !== staffId) {
+    throw new AppError("Unauthorized — this withdrawal belongs to a different staff session", 403);
+  }
+
   const student = await db.query.students.findFirst({
     where: eq(students.id, withdrawal.studentId),
   });
@@ -124,338 +107,174 @@ export const verifyWithdrawalPinService = async (
     throw new AppError("Student not found", 404);
   }
 
-  // ─── Verify PIN against hash ───
-  const isPinValid = await bcrypt.compare(pin, student.pinHash);
+  const isPinValid = await verifyOtp(pin, student.pinHash);
   if (!isPinValid) {
-    // ─── Mark withdrawal as rejected ───
-    await db
-      .update(withdrawals)
-      .set({ status: "rejected", updatedAt: new Date() })
-      .where(eq(withdrawals.id, withdrawalId));
-
-    // ─── Audit log for failed PIN attempt ───
     await db.insert(auditLogs).values({
-      actorType: "student",
-      actorId: student.id,
-      action: "WITHDRAWAL_PIN_FAILED",
-      targetType: "withdrawal",
-      targetId: withdrawalId,
-      metadata: { amount: withdrawal.amount, reason: withdrawal.reason },
+      actorType: "staff",
+      actorId: staffId,
+      action: "WITHDRAWAL_WRONG_PIN",
+      targetType: "student",
+      targetId: student.id,
+      metadata: { withdrawalId },
     });
-
-    throw new AppError("Invalid PIN. Withdrawal rejected.", 400);
+    throw new AppError("Incorrect PIN", 400);
   }
 
-  // ─── PIN correct — process withdrawal atomically ───
+  if (student.balance < withdrawal.amount) {
+    await db.update(withdrawals).set({ status: "rejected", updatedAt: new Date() }).where(eq(withdrawals.id, withdrawalId));
+    throw new AppError("Insufficient balance", 400);
+  }
+
+  let updatedStudent: typeof student;
+
   await db.transaction(async (tx) => {
-    // ─── 1. Mark withdrawal as approved ───
-    await tx
-      .update(withdrawals)
-      .set({
-        status: "approved",
-        verifiedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(withdrawals.id, withdrawalId));
+    await tx.update(withdrawals).set({ status: "approved", verifiedAt: new Date(), updatedAt: new Date() }).where(eq(withdrawals.id, withdrawalId));
 
-    // ─── 2. Deduct student balance ───
-    const currentStudent = await tx.query.students.findFirst({
-      where: eq(students.id, withdrawal.studentId),
-    });
+    const [updated] = await tx.update(students).set({ balance: student.balance - withdrawal.amount, updatedAt: new Date() }).where(eq(students.id, student.id)).returning();
+    updatedStudent = updated;
 
-    const newBalance = currentStudent!.balance - withdrawal.amount;
-
-    const [updatedStudent] = await tx
-      .update(students)
-      .set({
-        balance: newBalance,
-        updatedAt: new Date(),
-      })
-      .where(eq(students.id, withdrawal.studentId))
-      .returning();
-
-    // ─── 3. Create transaction record ───
     await tx.insert(transactions).values({
-      studentId: withdrawal.studentId,
+      studentId: student.id,
       type: "withdrawal",
       status: "completed",
       amount: -withdrawal.amount,
-      balanceAfter: updatedStudent.balance,
-      description: `Withdrawal: ${withdrawal.reason}`,
+      balanceAfter: updated.balance,
+      description: withdrawal.reason,
       withdrawalId: withdrawal.id,
     });
-
-    // ─── 4. Audit log ───
-    await tx.insert(auditLogs).values({
-      actorType: "student",
-      actorId: student.id,
-      action: "WITHDRAWAL_APPROVED",
-      targetType: "withdrawal",
-      targetId: withdrawalId,
-      metadata: {
-        amount: withdrawal.amount,
-        reason: withdrawal.reason,
-        newBalance: updatedStudent.balance,
-      },
-    });
   });
 
-  // ─── 5. Notify all linked parents (outside transaction) ───
-  const linkedParents = await db.query.parentStudents.findMany({
-    where: eq(parentStudents.studentId, withdrawal.studentId),
+  const staffMember = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
+
+  await notifyParentsOfStudent({
+    studentId: student.id,
+    studentName: student.fullName,
+    type: "withdrawal_success",
+    title: "Withdrawal Alert",
+    body: `${withdrawal.amount.toLocaleString()} Frw withdrawn. Reason: ${withdrawal.reason}. Staff: ${staffMember?.fullName}. Balance: ${updatedStudent!.balance.toLocaleString()} Frw`,
   });
-
-  await Promise.all(
-    linkedParents.map(async (link) => {
-      const parent = await db.query.parents.findFirst({
-        where: eq(parents.id, link.parentId),
-      });
-
-      if (parent?.fcmToken) {
-        await notifyParentsOfStudent({
-          studentId: withdrawal.studentId,
-          studentName: student.fullName,
-          type: "withdrawal_success",
-          title: "Withdrawal Completed",
-          body: `${withdrawal.amount.toLocaleString()} Frw withdrawn for ${withdrawal.reason}. New balance: ${student.balance - withdrawal.amount} Frw.`,
-          parentId: parent.id,
-        });
-      }
-    })
-  );
 
   return {
-    id: withdrawal.id,
-    status: "approved",
+    withdrawalId: withdrawal.id,
     amount: withdrawal.amount,
     reason: withdrawal.reason,
-    newBalance: student.balance - withdrawal.amount,
+    status: "approved",
+    balanceAfter: updatedStudent!.balance,
+    student: { id: student.id, fullName: student.fullName },
+    staff: { fullName: staffMember?.fullName },
   };
 };
 
-// ─────────────────────────────────────────
-// POST /withdrawals/:id/reverse
-// ─── Staff reverses an approved withdrawal (e.g. mistake)
-// ─── Credits balance back, updates records, notifies parents
-// ─────────────────────────────────────────
 export const reverseWithdrawalService = async (
   staffId: string,
-  staffRole: StaffRole,
+  schoolId: string,
   withdrawalId: string,
   input: ReverseWithdrawalInput
 ) => {
   const { reason } = input;
 
-  // ─── Only admin can reverse withdrawals ───
-  if (staffRole !== "admin") {
-    throw new AppError("Only admin can reverse withdrawals", 403);
-  }
-
-  // ─── Find approved withdrawal ───
   const withdrawal = await db.query.withdrawals.findFirst({
-    where: and(
-      eq(withdrawals.id, withdrawalId),
-      eq(withdrawals.status, "approved")
-    ),
+    where: and(eq(withdrawals.id, withdrawalId), eq(withdrawals.status, "approved")),
   });
 
   if (!withdrawal) {
-    throw new AppError("Approved withdrawal not found", 404);
+    throw new AppError("Withdrawal not found or cannot be reversed", 404);
   }
 
-  // ─── Process reversal atomically ───
+  const student = await db.query.students.findFirst({
+    where: and(eq(students.id, withdrawal.studentId), eq(students.schoolId, schoolId)),
+  });
+
+  if (!student) {
+    throw new AppError("Student does not belong to your school", 403);
+  }
+
+  let updatedStudent: typeof student;
+
   await db.transaction(async (tx) => {
-    // ─── 1. Mark withdrawal as reversed ───
-    await tx
-      .update(withdrawals)
-      .set({
-        status: "reversed",
-        reversalReason: reason,
-        reversedBy: staffId,
-        reversedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(withdrawals.id, withdrawalId));
+    await tx.update(withdrawals).set({ status: "reversed", reversalReason: reason, reversedBy: staffId, reversedAt: new Date(), updatedAt: new Date() }).where(eq(withdrawals.id, withdrawalId));
 
-    // ─── 2. Credit balance back ───
-    const currentStudent = await tx.query.students.findFirst({
-      where: eq(students.id, withdrawal.studentId),
-    });
+    const [updated] = await tx.update(students).set({ balance: student.balance + withdrawal.amount, updatedAt: new Date() }).where(eq(students.id, student.id)).returning();
+    updatedStudent = updated;
 
-    const newBalance = currentStudent!.balance + withdrawal.amount;
-
-    const [updatedStudent] = await tx
-      .update(students)
-      .set({
-        balance: newBalance,
-        updatedAt: new Date(),
-      })
-      .where(eq(students.id, withdrawal.studentId))
-      .returning();
-
-    // ─── 3. Create reversal transaction ───
     await tx.insert(transactions).values({
-      studentId: withdrawal.studentId,
-      type: "withdrawal",
+      studentId: student.id,
+      type: "deposit",
       status: "reversed",
       amount: withdrawal.amount,
-      balanceAfter: updatedStudent.balance,
+      balanceAfter: updated.balance,
       description: `Reversal: ${reason}`,
       withdrawalId: withdrawal.id,
     });
-
-    // ─── 4. Audit log ───
-    await tx.insert(auditLogs).values({
-      actorType: "admin",
-      actorId: staffId,
-      action: "WITHDRAWAL_REVERSED",
-      targetType: "withdrawal",
-      targetId: withdrawalId,
-      metadata: {
-        amount: withdrawal.amount,
-        reason,
-        newBalance: updatedStudent.balance,
-      },
-    });
   });
 
-  // ─── 5. Notify parents ───
-  const student = await db.query.students.findFirst({
-    where: eq(students.id, withdrawal.studentId),
+  await db.insert(auditLogs).values({
+    actorType: "staff",
+    actorId: staffId,
+    action: "WITHDRAWAL_REVERSED",
+    targetType: "withdrawal",
+    targetId: withdrawalId,
+    metadata: { reason, amount: withdrawal.amount, studentId: student.id },
   });
 
-  const linkedParents = await db.query.parentStudents.findMany({
-    where: eq(parentStudents.studentId, withdrawal.studentId),
+  await notifyParentsOfStudent({
+    studentId: student.id,
+    studentName: student.fullName,
+    type: "withdrawal_reversed",
+    title: "Withdrawal Reversed",
+    body: `${withdrawal.amount.toLocaleString()} Frw refunded to ${student.fullName}. Reason: ${reason}`,
   });
-
-  await Promise.all(
-    linkedParents.map(async (link) => {
-      const parent = await db.query.parents.findFirst({
-        where: eq(parents.id, link.parentId),
-      });
-
-      if (parent?.fcmToken) {
-        await notifyParentsOfStudent({
-          studentId: withdrawal.studentId,
-          studentName: student?.fullName || "your child",
-          type: "withdrawal_reversed",
-          title: "Withdrawal Reversed",
-          body: `${withdrawal.amount.toLocaleString()} Frw has been returned to ${student?.fullName}'s account. Reason: ${reason}`,
-          parentId: parent.id,
-        });
-      }
-    })
-  );
 
   return {
-    id: withdrawal.id,
+    withdrawalId,
     status: "reversed",
-    amount: withdrawal.amount,
+    refundedAmount: withdrawal.amount,
+    balanceAfter: updatedStudent!.balance,
     reason,
-    newBalance: student!.balance + withdrawal.amount,
   };
 };
 
-// ─────────────────────────────────────────
-// GET /withdrawals/history
-// ─── Staff views withdrawal history for their school
-// ─── Parents can view withdrawals for their linked students
-// ─────────────────────────────────────────
 export const getWithdrawalHistoryService = async (
-  schoolId: string | undefined,
-  parentId: string | undefined,
+  parentId: string,
   input: WithdrawalHistoryInput
 ) => {
   const { studentId, status, page, limit } = input;
   const offset = (page - 1) * limit;
 
-  // ─── Build where clause based on caller type ───
-  let whereClause;
-  if (schoolId) {
-    // Staff: filter by school via student relationship
-    whereClause = eq(students.schoolId, schoolId);
-    if (studentId) {
-      whereClause = and(whereClause, eq(withdrawals.studentId, studentId));
-    }
-  } else if (parentId) {
-    // Parent: filter by linked students only
-    const linkedStudentIds = (
-      await db.query.parentStudents.findMany({
-        where: eq(parentStudents.parentId, parentId),
-        columns: { studentId: true },
-      })
-    ).map((l) => l.studentId);
+  const linkedStudents = await db
+    .select({ studentId: parentStudents.studentId })
+    .from(parentStudents)
+    .where(eq(parentStudents.parentId, parentId));
 
-    whereClause = eq(withdrawals.studentId, linkedStudentIds[0]);
-    if (studentId) {
-      if (!linkedStudentIds.includes(studentId)) {
-        throw new AppError("Student not linked to your account", 403);
-      }
-      whereClause = eq(withdrawals.studentId, studentId);
-    } else {
-      whereClause = inArray(withdrawals.studentId, linkedStudentIds);
-    }
+  const linkedIds = linkedStudents.map((l) => l.studentId);
+
+  if (linkedIds.length === 0) {
+    return { data: [], meta: { page, limit, total: 0, totalPages: 0 } };
   }
 
-  if (status) {
-    whereClause = and(whereClause, eq(withdrawals.status, status));
-  }
+  const whereClauses = [eq(students.schoolId, student.schoolId)];
+  if (studentId) whereClauses.push(eq(withdrawals.studentId, studentId));
+  if (status) whereClauses.push(eq(withdrawals.status, status));
 
-  const history = await db
-    .select({
-      id: withdrawals.id,
-      studentId: withdrawals.studentId,
-      amount: withdrawals.amount,
-      reason: withdrawals.reason,
-      status: withdrawals.status,
-      verifiedAt: withdrawals.verifiedAt,
-      reversalReason: withdrawals.reversalReason,
-      createdAt: withdrawals.createdAt,
-    })
-    .from(withdrawals)
-    .innerJoin(students, eq(withdrawals.studentId, students.id))
-    .where(whereClause)
-    .orderBy(desc(withdrawals.createdAt))
-    .limit(limit)
-    .offset(offset);
+  const history = await db.query.withdrawals.findMany({
+    where: and(...whereClauses),
+    orderBy: [desc(withdrawals.createdAt)],
+    limit,
+    offset,
+  });
 
-  // ─── Attach student and staff info ───
+  const filtered = history.filter((w) => linkedIds.includes(w.studentId));
+
   const enriched = await Promise.all(
-    history.map(async (w) => {
-      const student = await db.query.students.findFirst({
-        where: eq(students.id, w.studentId),
-      });
-      const staff = await db.query.staff.findFirst({
-        where: eq(staffSchema.id, w.staffId),
-      });
-
-      return {
-        ...w,
-        student: {
-          id: student?.id,
-          fullName: student?.fullName,
-        },
-        staff: {
-          id: staff?.id,
-          fullName: staff?.fullName,
-        },
-      };
+    filtered.map(async (w) => {
+      const s = await db.query.students.findFirst({ where: eq(students.id, w.studentId) });
+      const st = await db.query.staff.findFirst({ where: eq(staff.id, w.staffId) });
+      return { ...w, student: { id: s?.id, fullName: s?.fullName }, staff: { fullName: st?.fullName } };
     })
   );
 
-  const [{ total }] = await db
-    .select({ total: count() })
-    .from(withdrawals)
-    .innerJoin(students, eq(withdrawals.studentId, students.id))
-    .where(whereClause);
-
   return {
     data: enriched,
-    meta: {
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-    },
+    meta: { page, limit, total: enriched.length, totalPages: Math.ceil(enriched.length / limit) },
   };
 };

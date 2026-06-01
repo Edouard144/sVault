@@ -18,40 +18,9 @@ const router = Router();
  * @swagger
  * tags:
  *   name: Deposits
- *   description: Parent deposits via MoMo
+ *   description: Parent deposits money to student account via MoMo
  */
 
-/**
- * @swagger
- * /deposits/initiate:
- *   post:
- *     summary: Start a MoMo deposit to a student
- *     tags: [Deposits]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required: [studentId, amount, payerPhone]
- *             properties:
- *               studentId:
- *                 type: string
- *                 example: "a1b2c3d4-..."
- *               amount:
- *                 type: number
- *                 example: 20000
- *               payerPhone:
- *                 type: string
- *                 example: "+250788123456"
- *     responses:
- *       201:
- *         description: Deposit initiated, awaiting MoMo confirmation
- *       403:
- *         description: Student not linked or frozen
- */
 router.post(
   "/initiate",
   authMiddleware,
@@ -61,31 +30,18 @@ router.post(
 
 /**
  * @swagger
- * /deposits/history:
- *   get:
- *     summary: Get parent's deposit history
+ * /payments/webhook:
+ *   post:
+ *     summary: MTN MoMo payment webhook — do not call manually
  *     tags: [Deposits]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: studentId
- *         schema:
- *           type: string
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *     responses:
- *       200:
- *         description: Paginated deposit history
+ *     security: []
  */
+router.post(
+  "/webhook",
+  validate(momoWebhookSchema),
+  handleMomoWebhook
+);
+
 router.get(
   "/history",
   authMiddleware,
