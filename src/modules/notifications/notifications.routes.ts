@@ -12,9 +12,13 @@ const router = Router();
 router.use(authMiddleware);
 
 router.get("/", getNotifications);
+const notificationParamsSchema = z.object({
+  id: z.string().uuid(),
+});
+
 router.patch(
   "/:id/read",
-  validate({ id: z.string().uuid() }).shape,
+  validate(notificationParamsSchema),
   markNotificationRead
 );
 

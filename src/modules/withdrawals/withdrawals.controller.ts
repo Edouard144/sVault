@@ -12,12 +12,13 @@ import type {
 } from "../../types/index";
 
 export const initiateWithdrawal = async (
-  req: AuthenticatedStaffRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await initiateWithdrawalService(req.staff.staffId, req.staff.schoolId, req.body);
+    const staffReq = req as AuthenticatedStaffRequest;
+    const result = await initiateWithdrawalService(staffReq.staff.staffId, staffReq.staff.schoolId, req.body);
     sendSuccess(res, result.message, result, 201);
   } catch (error) {
     next(error);
@@ -25,12 +26,13 @@ export const initiateWithdrawal = async (
 };
 
 export const verifyWithdrawalPin = async (
-  req: AuthenticatedStaffRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await verifyWithdrawalPinService(req.staff.staffId, req.body);
+    const staffReq = req as AuthenticatedStaffRequest;
+    const result = await verifyWithdrawalPinService(staffReq.staff.staffId, req.body);
     sendSuccess(res, "Withdrawal approved", result, 200);
   } catch (error) {
     next(error);
@@ -38,12 +40,13 @@ export const verifyWithdrawalPin = async (
 };
 
 export const reverseWithdrawal = async (
-  req: AuthenticatedStaffRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await reverseWithdrawalService(req.staff.staffId, req.staff.schoolId, req.params.id, req.body);
+    const staffReq = req as AuthenticatedStaffRequest;
+    const result = await reverseWithdrawalService(staffReq.staff.staffId, staffReq.staff.schoolId, req.params.id, req.body);
     sendSuccess(res, "Withdrawal reversed successfully", result, 200);
   } catch (error) {
     next(error);

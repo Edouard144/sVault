@@ -1,10 +1,9 @@
-import { Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import { verifyAccessToken } from "../utils/token";
 import { AppError } from "./error.middleware";
-import type { AuthenticatedParentRequest } from "../types/index";
 
 export const authMiddleware = (
-  req: AuthenticatedParentRequest,
+  req: Request,
   _res: Response,
   next: NextFunction
 ): void => {

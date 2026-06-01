@@ -13,15 +13,15 @@ export interface StaffTokenPayload {
 }
 
 export const signAccessToken = (payload: ParentTokenPayload): string => {
-  return jwt.sign(payload, process.env.JWT_ACCESS_SECRET!, {
+  return jwt.sign(payload, process.env.JWT_ACCESS_SECRET! as jwt.Secret, {
     expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
-  });
+  } as jwt.SignOptions);
 };
 
 export const signRefreshToken = (payload: ParentTokenPayload): string => {
-  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET!, {
+  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET! as jwt.Secret, {
     expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
-  });
+  } as jwt.SignOptions);
 };
 
 export const verifyAccessToken = (token: string): ParentTokenPayload => {
@@ -41,9 +41,9 @@ export const verifyRefreshToken = (token: string): ParentTokenPayload => {
 };
 
 export const signStaffToken = (payload: StaffTokenPayload): string => {
-  return jwt.sign(payload, process.env.STAFF_JWT_SECRET!, {
+  return jwt.sign(payload, process.env.STAFF_JWT_SECRET! as jwt.Secret, {
     expiresIn: "12h",
-  });
+  } as jwt.SignOptions);
 };
 
 export const verifyStaffToken = (token: string): StaffTokenPayload => {

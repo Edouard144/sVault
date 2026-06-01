@@ -4,11 +4,11 @@
   "description": "SVault School Finance Management API",
   "main": "dist/server.js",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file .env node_modules/tsx/dist/cli.mjs watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node --env-file .env dist/server.js",
     "db:generate": "drizzle-kit generate:pg",
-    "db:push": "drizzle-kit push:pg --driver=pg"
+    "db:push": "drizzle-kit push:pg"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.7.0",
@@ -23,6 +23,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.0",
     "twilio": "^4.19.0",
     "uuid": "^9.0.0",

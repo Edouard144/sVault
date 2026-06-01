@@ -8,12 +8,13 @@ import { sendSuccess } from "../../utils/response";
 import type { AuthenticatedParentRequest } from "../../types/index";
 
 export const getDashboardAnalytics = async (
-  req: AuthenticatedParentRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const result = await getDashboardAnalyticsService(req.parent.parentId);
+    const parentReq = req as AuthenticatedParentRequest;
+    const result = await getDashboardAnalyticsService(parentReq.parent.parentId);
     sendSuccess(res, "Dashboard analytics fetched", result);
   } catch (error) {
     next(error);
@@ -21,13 +22,14 @@ export const getDashboardAnalytics = async (
 };
 
 export const getStudentSpending = async (
-  req: AuthenticatedParentRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
+    const parentReq = req as AuthenticatedParentRequest;
     const result = await getStudentSpendingService(
-      req.parent.parentId,
+      parentReq.parent.parentId,
       req.params.id
     );
     sendSuccess(res, "Student spending analytics fetched", result);
@@ -37,13 +39,14 @@ export const getStudentSpending = async (
 };
 
 export const getStudentCategories = async (
-  req: AuthenticatedParentRequest,
+  req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
+    const parentReq = req as AuthenticatedParentRequest;
     const result = await getStudentCategoriesService(
-      req.parent.parentId,
+      parentReq.parent.parentId,
       req.params.id
     );
     sendSuccess(res, "Spending categories fetched", result);

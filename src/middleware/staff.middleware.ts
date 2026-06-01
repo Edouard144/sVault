@@ -1,10 +1,9 @@
-import { Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import { verifyStaffToken } from "../utils/token";
 import { AppError } from "./error.middleware";
-import type { AuthenticatedStaffRequest } from "../types/index";
 
 export const staffMiddleware = (
-  req: AuthenticatedStaffRequest,
+  req: Request,
   _res: Response,
   next: NextFunction
 ): void => {
@@ -31,7 +30,7 @@ export const staffMiddleware = (
 };
 
 export const adminStaffMiddleware = (
-  req: AuthenticatedStaffRequest,
+  req: Request,
   _res: Response,
   next: NextFunction
 ): void => {

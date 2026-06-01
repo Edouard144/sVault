@@ -15,7 +15,7 @@ import { verifyOtp } from "../../utils/otp";
 import { notifyParentsOfStudent } from "../notifications/notifications.service";
 import type {
   InitiateWithdrawalInput,
-  VerifyWithdrawalInput,
+  VerifyWithdrawalPinInput,
   ReverseWithdrawalInput,
   WithdrawalHistoryInput,
 } from "./withdrawals.schema";
@@ -83,7 +83,7 @@ export const initiateWithdrawalService = async (
 
 export const verifyWithdrawalPinService = async (
   staffId: string,
-  input: VerifyWithdrawalInput
+  input: VerifyWithdrawalPinInput
 ) => {
   const { withdrawalId, pin } = input;
 
@@ -252,7 +252,7 @@ export const getWithdrawalHistoryService = async (
     return { data: [], meta: { page, limit, total: 0, totalPages: 0 } };
   }
 
-  const whereClauses = [eq(students.schoolId, student.schoolId)];
+  const whereClauses: any[] = [];
   if (studentId) whereClauses.push(eq(withdrawals.studentId, studentId));
   if (status) whereClauses.push(eq(withdrawals.status, status));
 
