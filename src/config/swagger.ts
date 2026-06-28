@@ -27,6 +27,12 @@ const options: swaggerJsdoc.Options = {
           bearerFormat: "JWT",
           description: "Enter your JWT access token",
         },
+        AdminKey: {
+          type: "apiKey",
+          in: "header",
+          name: "x-admin-key",
+          description: "Enter your admin secret key",
+        },
       },
     },
     security: [{ BearerAuth: [] }],
